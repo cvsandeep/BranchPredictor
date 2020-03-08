@@ -66,7 +66,7 @@ inline bool get_local_prediction(unsigned int pc_index) {
 inline void update_local_predictor(unsigned int pc_index, bool taken) {
 	unsigned int x = get_local_history(pc_index);
 	if (taken) {
-		if (~LocalPredictor[x].all())
+		if (!LocalPredictor[x].all())
 			LocalPredictor[x] = increment(LocalPredictor[x]);
 	} else {
 		if(LocalPredictor[x].any())
@@ -86,7 +86,7 @@ inline bool get_global_prediction(void) {
 
 inline void update_global_predictor(bool taken) {
 	unsigned int x = get_path_history();
-	if(taken == true && ~GlobalPredictor[x].all()) {
+	if(taken == true && !GlobalPredictor[x].all()) {
 		GlobalPredictor[x] = increment(GlobalPredictor[x]);
 
 	}
@@ -108,7 +108,7 @@ inline bool get_choice_prediction(void) {
 inline void update_choice_predictor(bool taken, unsigned int pc_index) {
 	unsigned int x = get_path_history();
 	if(get_local_prediction(pc_index) == taken && get_global_prediction() != taken ) {
-		if(~ChoicePredictor[x].all())
+		if(!ChoicePredictor[x].all())
 			ChoicePredictor[x] = increment(ChoicePredictor[x]);
 	}
 	else if(get_local_prediction(pc_index) != taken && get_global_prediction() == taken ) {
