@@ -3,48 +3,80 @@
 */
 
 #include "predictor.h"
-static unsigned int LocalHistory[1024],LocalPredictor[1024], GlobalPredictor[4096], ChoicePredictor[4096];
+#include <bitset>
+
+static std::bitset<10> LocalHistory[1024];
+static std::bitset<3> LocalPredictor[1024];
+static std::bitset<2> GlobalPredictor[4096];
+static std::bitset<2> ChoicePredictor[4096];
 static unsigned int PathHistory;
 
-inline void update_local_history(unsigned int pc, bool taken) {
-	LocalHistory[(pc>>2)&0x3FF] =  (LocalHistory[(pc>>2)&0x3FF] << 1) | taken;
+template <size_t N>
+inline std::bitset<N> increment ( std::bitset<N> in ) {
+//  add 1 to each value, and if it was 1 already, carry the 1 to the next.
+    for ( size_t i = 0; i < N; ++i ) {
+        if ( in[i] == 0 ) {  // There will be no carry
+            in[i] = 1;
+            break;
+            }
+        in[i] = 0;  // This entry was 1; set to zero and carry the 1
+        }
+    return in;
+    }
+
+template <size_t N>
+inline std::bitset<N> decrement ( std::bitset<N> in ) {
+//  add 1 to each value, and if it was 1 already, carry the 1 to the next.
+    for ( size_t i = 0; i < N; ++i ) {
+        if ( in[i] == 1 ) {  // Flip all bits until we find 1
+            in[i] = 0;
+            break;
+            }
+        in[i] = 1;  // This entry was 1; set to zero and carry the 1
+        }
+    return in;
+    }
+
+inline void update_local_history(unsigned int pc_index, bool taken) {
+	LocalHistory[pc_index] <<= 1;
+	LocalHistory[pc_index][0] = taken;
 }
 
 inline void update_path_history(bool taken) {
 	PathHistory =  (PathHistory << 1) | taken;
 }
 
-inline unsigned get_local_history(unsigned int pc) {
-	return LocalHistory[(pc>>2)&0x3FF];
+inline unsigned get_local_history(unsigned int pc_index) {
+	return LocalHistory[pc_index].to_ulong();
 }
 
 inline unsigned get_path_history(void) {
 	return PathHistory & 0xFFF;
 }
 
-inline bool get_local_prediction(unsigned int pc) {
-	unsigned int x = get_local_history(pc);
-	if((LocalPredictor[x] & 0x4) >> 2) {
+inline bool get_local_prediction(unsigned int pc_index) {
+	unsigned int x = get_local_history(pc_index);
+	if((LocalPredictor[x])[2]) {
 		return true;
 	} else {
 		return false;
 	}
 }
 
-inline void update_local_predictor(unsigned int pc, bool taken) {
-	unsigned int x = get_local_history(pc);
+inline void update_local_predictor(unsigned int pc_index, bool taken) {
+	unsigned int x = get_local_history(pc_index);
 	if (taken) {
-		if (LocalPredictor[x] < 7)
-			LocalPredictor[x]++;
+		if (~LocalPredictor[x].all())
+			LocalPredictor[x] = increment(LocalPredictor[x]);
 	} else {
-		if(LocalPredictor[x])
-			LocalPredictor[x]--;
+		if(LocalPredictor[x].any())
+			LocalPredictor[x] = decrement(LocalPredictor[x]);
 	}
 }
 
 inline bool get_global_prediction(void) {
 	unsigned int x = get_path_history();
-	if (GlobalPredictor[x] & 0x2 >> 1) {
+	if (GlobalPredictor[x][1]) {
 		return true;
 	}
 	else {
@@ -54,17 +86,18 @@ inline bool get_global_prediction(void) {
 
 inline void update_global_predictor(bool taken) {
 	unsigned int x = get_path_history();
-	if(taken == true && GlobalPredictor[x] < 3) {
-		GlobalPredictor[x]++;
+	if(taken == true && ~GlobalPredictor[x].all()) {
+		GlobalPredictor[x] = increment(GlobalPredictor[x]);
+
 	}
-	else if(taken == false && GlobalPredictor[x] > 0) {
-		GlobalPredictor[x]--;
+	else if(taken == false && GlobalPredictor[x].any()) {
+		GlobalPredictor[x] = decrement(GlobalPredictor[x]);
 	}
 }
 
 inline bool get_choice_prediction(void) {
 	unsigned int x = get_path_history();
-	if (ChoicePredictor[x] & 0x2 >> 1) {
+	if (ChoicePredictor[x][1]) {
 		return true;
 	}
 	else {
@@ -72,15 +105,15 @@ inline bool get_choice_prediction(void) {
 	}
 }
 
-inline void update_choice_predictor(bool taken, unsigned int pc) {
+inline void update_choice_predictor(bool taken, unsigned int pc_index) {
 	unsigned int x = get_path_history();
-	if(get_local_prediction(pc) == taken && get_global_prediction() != taken ) {
-		if(ChoicePredictor[x] < 3)
-			ChoicePredictor[x]++;
+	if(get_local_prediction(pc_index) == taken && get_global_prediction() != taken ) {
+		if(~ChoicePredictor[x].all())
+			ChoicePredictor[x] = increment(ChoicePredictor[x]);
 	}
-	else if(get_local_prediction(pc) != taken && get_global_prediction() == taken ) {
-		if(ChoicePredictor[x] > 0)
-			ChoicePredictor[x]--;
+	else if(get_local_prediction(pc_index) != taken && get_global_prediction() == taken ) {
+		if(ChoicePredictor[x].any())
+			ChoicePredictor[x] = decrement(ChoicePredictor[x]);
 	}
 }
 
@@ -89,6 +122,7 @@ inline void update_choice_predictor(bool taken, unsigned int pc) {
 
 		/* replace this code with your own */
             bool prediction = false;
+            unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
 
 			printf("%0x %0x %1d %1d %1d %1d ",br->instruction_addr,
 			                                br->branch_target,br->is_indirect,br->is_conditional,
@@ -96,7 +130,7 @@ inline void update_choice_predictor(bool taken, unsigned int pc) {
             if (br->is_conditional)
                 prediction = true;
             if(get_choice_prediction())
-            	prediction = get_local_prediction(br->instruction_addr);
+            	prediction = get_local_prediction(pc_index);
             else
             	prediction = get_global_prediction();
             return prediction;   // true for taken, false for not taken
@@ -109,10 +143,11 @@ inline void update_choice_predictor(bool taken, unsigned int pc) {
         {
 		/* replace this code with your own */
 			printf("%1d\n",taken);
-			update_local_predictor(br->instruction_addr,taken);
-			update_local_history(br->instruction_addr,taken);
+			unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
+			update_local_predictor(pc_index,taken);
+			update_local_history(pc_index,taken);
 
 			update_global_predictor(taken);
-			update_choice_predictor(br->instruction_addr,taken);
+			update_choice_predictor(pc_index,taken);
 			update_path_history(taken);
         }
