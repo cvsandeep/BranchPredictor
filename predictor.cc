@@ -124,15 +124,38 @@ inline void update_choice_predictor(bool taken, unsigned int pc_index) {
             bool prediction = false;
             unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
 
-			printf("%0x %0x %1d %1d %1d %1d ",br->instruction_addr,
-			                                br->branch_target,br->is_indirect,br->is_conditional,
-											br->is_call,br->is_return);
-            if (br->is_conditional)
+
+            if (br->is_conditional) {
                 prediction = true;
-            if(get_choice_prediction())
-            	prediction = get_local_prediction(pc_index);
-            else
-            	prediction = get_global_prediction();
+                printf("CONDITIONAL: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
+                			                                br->branch_target,br->is_indirect,br->is_conditional,
+                											br->is_call,br->is_return);
+            } else {
+            	if (br->is_call) {   // Call push return address in stack
+            		//Stores the return address <- ra
+            		// No change in br->branch_target
+            		printf("CALL: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
+            		                			                                br->branch_target,br->is_indirect,br->is_conditional,
+            		                											br->is_call,br->is_return);
+            	} else if(br->is_return) {   //If pop restore return address
+            		// Restores the target address -> br->branch_target
+            		// Direct or indirect
+            		printf("RETURN: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
+            		                			                                br->branch_target,br->is_indirect,br->is_conditional,
+            		                											br->is_call,br->is_return);
+            	} else {				// Its branch predicting as taken or not taken
+            		printf("BRANCH: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
+            		                			                                br->branch_target,br->is_indirect,br->is_conditional,
+            		                											br->is_call,br->is_return);
+            		if(get_choice_prediction())
+						prediction = get_local_prediction(pc_index);
+					else
+						prediction = get_global_prediction();
+
+            		//If not taken branch_taget address is pc+4
+            	}
+            }
+
             return prediction;   // true for taken, false for not taken
         }
 
