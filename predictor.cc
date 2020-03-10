@@ -125,21 +125,24 @@ inline void update_choice_predictor(bool taken, unsigned int pc_index) {
             unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
 
 
-            if (br->is_conditional) {
+            if (!br->is_conditional) {
                 prediction = true;
                 printf("CONDITIONAL: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
                 			                                br->branch_target,br->is_indirect,br->is_conditional,
                 											br->is_call,br->is_return);
             } else {
             	if (br->is_call) {   // Call push return address in stack
+            		prediction = true;	// For now defaulting true
             		//Stores the return address <- ra
             		// No change in br->branch_target
             		printf("CALL: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
             		                			                                br->branch_target,br->is_indirect,br->is_conditional,
             		                											br->is_call,br->is_return);
             	} else if(br->is_return) {   //If pop restore return address
+            		prediction = true;	// For now defaulting true
             		// Restores the target address -> br->branch_target
             		// Direct or indirect
+            		// The processor also trains the line predictor with the address of jumps and subroutine calls that use direct register addressing.
             		printf("RETURN: %0x %0x %1d %1d %1d %1d ",br->instruction_addr,
             		                			                                br->branch_target,br->is_indirect,br->is_conditional,
             		                											br->is_call,br->is_return);
