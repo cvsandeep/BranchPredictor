@@ -176,7 +176,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
         {
 
 		/* replace this code with your own */
-            bool prediction = false;
+            bool prediction = true;
             unsigned int pc_index = (br->instruction_addr<<2) & 0x3FF;
 
 
