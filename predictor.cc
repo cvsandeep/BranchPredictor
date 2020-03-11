@@ -11,6 +11,9 @@ static std::bitset<2> GlobalPredictor[4096];
 static std::bitset<2> ChoicePredictor[4096];
 static unsigned int PathHistory;
 
+/*
+ * Helper Functions
+ */
 template <size_t N>
 inline std::bitset<N> increment ( std::bitset<N> in ) {
 //  add 1 to each value, and if it was 1 already, carry the 1 to the next.
@@ -37,6 +40,36 @@ inline std::bitset<N> decrement ( std::bitset<N> in ) {
     return in;
     }
 
+
+inline bool get_local_prediction(unsigned int pc_index) {
+	unsigned int x = LocalHistory[pc_index].to_ulong();
+	if((LocalPredictor[x])[2]) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
+inline bool get_global_prediction(void) {
+	unsigned int x = PathHistory & 0xFFF;
+	if (GlobalPredictor[x][1]) {
+		return true;
+	}
+	else {
+		return false;
+	}
+}
+
+inline bool get_choice_prediction(void) {
+	unsigned int x = PathHistory & 0xFFF;
+	if (ChoicePredictor[x][1]) {
+		return true;
+	}
+	else {
+		return false;
+	}
+}
+
 inline void update_local_history(unsigned int pc_index, bool taken) {
 	LocalHistory[pc_index] <<= 1;
 	LocalHistory[pc_index][0] = taken;
@@ -46,25 +79,8 @@ inline void update_path_history(bool taken) {
 	PathHistory =  (PathHistory << 1) | taken;
 }
 
-inline unsigned get_local_history(unsigned int pc_index) {
-	return LocalHistory[pc_index].to_ulong();
-}
-
-inline unsigned get_path_history(void) {
-	return PathHistory & 0xFFF;
-}
-
-inline bool get_local_prediction(unsigned int pc_index) {
-	unsigned int x = get_local_history(pc_index);
-	if((LocalPredictor[x])[2]) {
-		return true;
-	} else {
-		return false;
-	}
-}
-
 inline void update_local_predictor(unsigned int pc_index, bool taken) {
-	unsigned int x = get_local_history(pc_index);
+	unsigned int x = LocalHistory[pc_index].to_ulong();
 	if (taken) {
 		if (!LocalPredictor[x].all())
 			LocalPredictor[x] = increment(LocalPredictor[x]);
@@ -74,18 +90,8 @@ inline void update_local_predictor(unsigned int pc_index, bool taken) {
 	}
 }
 
-inline bool get_global_prediction(void) {
-	unsigned int x = get_path_history();
-	if (GlobalPredictor[x][1]) {
-		return true;
-	}
-	else {
-		return false;
-	}
-}
-
 inline void update_global_predictor(bool taken) {
-	unsigned int x = get_path_history();
+	unsigned int x = PathHistory & 0xFFF;
 	if(taken == true && !GlobalPredictor[x].all()) {
 		GlobalPredictor[x] = increment(GlobalPredictor[x]);
 
@@ -95,18 +101,8 @@ inline void update_global_predictor(bool taken) {
 	}
 }
 
-inline bool get_choice_prediction(void) {
-	unsigned int x = get_path_history();
-	if (ChoicePredictor[x][1]) {
-		return true;
-	}
-	else {
-		return false;
-	}
-}
-
 inline void update_choice_predictor(bool taken, unsigned int pc_index) {
-	unsigned int x = get_path_history();
+	unsigned int x = PathHistory & 0xFFF;
 	if(get_local_prediction(pc_index) == taken && get_global_prediction() != taken ) {
 		if(!ChoicePredictor[x].all())
 			ChoicePredictor[x] = increment(ChoicePredictor[x]);
