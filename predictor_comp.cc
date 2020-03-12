@@ -11,7 +11,7 @@ static std::bitset<10> LocalHistory[1024];
 static std::bitset<2> LocalPredictor[1024];
 static std::bitset<2> LocalTag[1024];
 
-static std::bitset<2> GlobalPredictor[1024];
+static std::bitset<2> GlobalPredictor[4096];
 static std::bitset<2> GlobalTag[1024];
 static std::bitset<12> PathHistory;
 
@@ -58,11 +58,11 @@ inline bool get_base_prediction(unsigned int pc_index) {
 
 inline void update_base_predictor(unsigned int pc_index, bool taken) {
 	if (taken) {
-		if (!LocalPredictor[pc_index].all())
-			LocalPredictor[pc_index] = increment(LocalPredictor[pc_index]);
+		if (!BasePredictor[pc_index].all())
+			BasePredictor[pc_index] = increment(BasePredictor[pc_index]);
 	} else {
-		if(LocalPredictor[pc_index].any())
-			LocalPredictor[pc_index] = decrement(LocalPredictor[pc_index]);
+		if(BasePredictor[pc_index].any())
+			BasePredictor[pc_index] = decrement(BasePredictor[pc_index]);
 	}
 }
 
@@ -123,7 +123,7 @@ inline bool get_actual_prediction(unsigned int pc_index) {
 	// get_local_prediction(pc_index)  get_global_prediction();
  	unsigned int l_val = LocalHistory[pc_index].to_ulong();
 	unsigned int g_val = PathHistory.to_ulong();
-	if( GlobalTag[g_val].to_ulong())
+	if( GlobalTag[pc_index].to_ulong())
 		return get_global_prediction();
 	else if( LocalTag[l_val].to_ulong())
 		return get_local_prediction(pc_index);
@@ -131,43 +131,48 @@ inline bool get_actual_prediction(unsigned int pc_index) {
 		return get_base_prediction(pc_index);
 }
 
-inline void update_actual_predictor(unsigned int pc_index,bool taken) {
+inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned int pc_tag) {
 	unsigned int l_val = LocalHistory[pc_index].to_ulong();
 	unsigned int g_val = PathHistory.to_ulong();
 	// get_local_prediction(pc_index)  get_global_prediction();
  
-	update_base_predictor(pc_index,taken);
+	//update_base_predictor(pc_index,taken);
+	if(BasePredictor[pc_index].to_ulong()){
+		if( get_base_prediction(pc_index) != taken) {
+		LocalPredictor[l_val] = BasePredictor[pc_index];
+		LocalTag[pc_index] = pc_tag;
+		update_local_history(pc_index,taken);
+		return;
+		}
+		else{
+			update_base_predictor(pc_index,taken);
+			return;
+		}
 
-	if( LocalTag[l_val].to_ulong()) {
-		if(get_local_prediction(pc_index) == taken) {
-			update_local_predictor(pc_index,taken);
+	}
+	else if( LocalTag[pc_index].to_ulong()) {
+		if(get_local_prediction(l_val) == taken) {
+			update_local_predictor(l_val,taken);
 			update_local_history(pc_index,taken);
-      return;
+			return;
 		} else {
 			//Global = LOCAL
 			GlobalPredictor[g_val] = LocalPredictor[l_val];
-			GlobalTag[g_val] = LocalTag[l_val];
-			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
+			GlobalTag[pc_index] = LocalTag[pc_index];
+			LocalTag[pc_index][0] = 0; LocalTag[pc_index][1] = 0;
+			update_global_predictor(taken);
 			update_global_history(taken);
 			return;
 		}
 
-	} else {
-		//LOCAL = BASE
-     update_base_predictor(pc_index,taken);
-     if(get_base_prediction(pc_index) == taken) {
-        return;
-  		} else {
-    		LocalPredictor[l_val] = BasePredictor[pc_index];
-    		LocalTag[l_val] = pc_index & 0x3;
-    		update_local_history(pc_index,taken);
-    		return;
-     }
 	}
-
-	if( GlobalTag[g_val].to_ulong()) {
+	else if(GlobalTag[pc_index].to_ulong()) {
 		update_global_predictor(taken);
 		update_global_history(taken);
+		return;
+	}
+	else{
+		update_base_predictor(pc_index,taken);
 	}
 	return;
 }
@@ -203,5 +208,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
         {
 			/* replace this code with your own */
 			unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
-			update_actual_predictor(pc_index, taken);
+            unsigned int pc_tag = (br->instruction_addr>>22) & 0x3;
+		//printf("IA: %0x\n", br->instruction_addr);
+			update_actual_predictor(pc_index, taken, pc_tag);
         }
