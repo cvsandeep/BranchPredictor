@@ -184,7 +184,6 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
             bool prediction = false;
             unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
 
-
             if (!br->is_conditional) {
                 prediction = true;
             } else {
