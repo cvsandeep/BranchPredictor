@@ -140,7 +140,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
 	if(BasePredictor[pc_index].to_ulong()){
 		if( get_base_prediction(pc_index) != taken) {
 		LocalPredictor[l_val] = BasePredictor[pc_index];
-		LocalTag[pc_index] = pc_tag;
+		LocalTag[l_val] = pc_tag;
 		update_local_history(pc_index,taken);
 		return;
 		}
@@ -150,16 +150,16 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
 		}
 
 	}
-	else if( LocalTag[pc_index].to_ulong()) {
-		if(get_local_prediction(l_val) == taken) {
-			update_local_predictor(l_val,taken);
+	else if( LocalTag[l_val].to_ulong()) {
+		if(get_local_prediction(pc_index) == taken) {
+			update_local_predictor(pc_index,taken);
 			update_local_history(pc_index,taken);
 			return;
 		} else {
 			//Global = LOCAL
 			GlobalPredictor[g_val] = LocalPredictor[l_val];
-			GlobalTag[pc_index] = LocalTag[pc_index];
-			LocalTag[pc_index][0] = 0; LocalTag[pc_index][1] = 0;
+			GlobalTag[pc_index] = LocalTag[l_val];
+			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
 			update_global_predictor(taken);
 			update_global_history(taken);
 			return;
