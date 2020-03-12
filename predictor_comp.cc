@@ -120,29 +120,29 @@ inline void update_global_predictor(bool taken) {
  *******************MY PREDICTOR **************************************
  **********************************************************************/
 inline bool get_actual_prediction(unsigned int pc_index) {
-	unsigned int x = pc_index & 0x3;
 	// get_local_prediction(pc_index)  get_global_prediction();
-	if( GlobalTag[x].to_ulong())
+ 	unsigned int l_val = LocalHistory[pc_index].to_ulong();
+	unsigned int g_val = PathHistory.to_ulong();
+	if( GlobalTag[g_val].to_ulong())
 		return get_global_prediction();
-	else if( LocalTag[x].to_ulong())
+	else if( LocalTag[l_val].to_ulong())
 		return get_local_prediction(pc_index);
 	else
 		return get_base_prediction(pc_index);
 }
 
 inline void update_actual_predictor(unsigned int pc_index,bool taken) {
-	unsigned int x = pc_index & 0x3;
 	unsigned int l_val = LocalHistory[pc_index].to_ulong();
 	unsigned int g_val = PathHistory.to_ulong();
 	// get_local_prediction(pc_index)  get_global_prediction();
-
-
+ 
 	update_base_predictor(pc_index,taken);
 
-	if( LocalTag[x].to_ulong()) {
+	if( LocalTag[l_val].to_ulong()) {
 		if(get_local_prediction(pc_index) == taken) {
 			update_local_predictor(pc_index,taken);
 			update_local_history(pc_index,taken);
+      return;
 		} else {
 			//Global = LOCAL
 			GlobalPredictor[g_val] = LocalPredictor[l_val];
@@ -154,13 +154,18 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
 
 	} else {
 		//LOCAL = BASE
-		LocalPredictor[l_val] = BasePredictor[x];
-		LocalPredictor[l_val] = x;
-		update_local_history(pc_index,taken);
-		return;
+     update_base_predictor(pc_index,taken);
+     if(get_base_prediction(pc_index) == taken) {
+        return;
+  		} else {
+    		LocalPredictor[l_val] = BasePredictor[pc_index];
+    		LocalTag[l_val] = pc_index & 0x3;
+    		update_local_history(pc_index,taken);
+    		return;
+     }
 	}
 
-	if( GlobalTag[x].to_ulong()) {
+	if( GlobalTag[g_val].to_ulong()) {
 		update_global_predictor(taken);
 		update_global_history(taken);
 	}
@@ -184,7 +189,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
             		prediction = true;	// For now defaulting true
             	} else {				// Its branch predicting as taken or not taken
             		 //Determine to use global or local predictors
-					prediction =  get_actual_prediction(pc_index);
+					        prediction =  get_actual_prediction(pc_index);
             	}
             }
 
