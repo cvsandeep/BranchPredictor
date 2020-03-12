@@ -13,11 +13,11 @@ static std::bitset<2> LocalTag[1024];
 
 static std::bitset<2> GlobalPredictor[1024];
 static std::bitset<2> GlobalTag[1024];
-static unsigned int PathHistory;
+static std::bitset<12> PathHistory;
 
-/*
- * Helper Functions
- */
+/**********************************************************************
+ *******************HELPER FUNCTIONS***********************************
+ **********************************************************************/
 template <size_t N>
 inline std::bitset<N> increment ( std::bitset<N> in ) {
 //  add 1 to each value, and if it was 1 already, carry the 1 to the next.
@@ -72,11 +72,7 @@ inline void update_base_predictor(unsigned int pc_index, bool taken) {
 
 inline bool get_local_prediction(unsigned int pc_index) {
 	unsigned int x = LocalHistory[pc_index].to_ulong();
-	if((LocalPredictor[x])[1]) {
-		return true;
-	} else {
-		return false;
-	}
+	return LocalPredictor[x][1];
 }
 
 inline void update_local_history(unsigned int pc_index, bool taken) {
@@ -98,22 +94,19 @@ inline void update_local_predictor(unsigned int pc_index, bool taken) {
 /**********************************************************************
  *******************GLOBAL PREDICTOR***********************************
  **********************************************************************/
+
 inline bool get_global_prediction(void) {
-	unsigned int x = PathHistory & 0x3FF;
-	if (GlobalPredictor[x][1]) {
-		return true;
-	}
-	else {
-		return false;
-	}
+	unsigned int x = PathHistory.to_ulong();
+	return GlobalPredictor[x][1];
 }
 
 inline void update_global_history(bool taken) {
-	PathHistory =  (PathHistory << 1) | taken;
+	PathHistory =  (PathHistory << 1);
+	PathHistory[0] = taken;
 }
 
 inline void update_global_predictor(bool taken) {
-	unsigned int x = PathHistory & 0x3FF;
+	unsigned int x = PathHistory.to_ulong();
 	if(taken == true && !GlobalPredictor[x].all()) {
 		GlobalPredictor[x] = increment(GlobalPredictor[x]);
 
@@ -139,7 +132,8 @@ inline bool get_actual_prediction(unsigned int pc_index) {
 
 inline void update_actual_predictor(unsigned int pc_index,bool taken) {
 	unsigned int x = pc_index & 0x3;
-	unsigned int val = LocalHistory[pc_index].to_ulong();
+	unsigned int l_val = LocalHistory[pc_index].to_ulong();
+	unsigned int g_val = PathHistory.to_ulong();
 	// get_local_prediction(pc_index)  get_global_prediction();
 
 
@@ -151,16 +145,17 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
 			update_local_history(pc_index,taken);
 		} else {
 			//Global = LOCAL
-			GlobalPredictor[val] = LocalPredictor[val];
-			GlobalTag[val] = LocalTag[val];
+			GlobalPredictor[g_val] = LocalPredictor[l_val];
+			GlobalTag[g_val] = LocalTag[l_val];
+			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
 			update_global_history(taken);
 			return;
 		}
 
 	} else {
 		//LOCAL = BASE
-		LocalPredictor[val] = BasePredictor[val];
-		LocalPredictor[val] = x;
+		LocalPredictor[l_val] = BasePredictor[x];
+		LocalPredictor[l_val] = x;
 		update_local_history(pc_index,taken);
 		return;
 	}
@@ -176,22 +171,23 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
         {
 
 		/* replace this code with your own */
-            bool prediction = true;
-            unsigned int pc_index = (br->instruction_addr<<2) & 0x3FF;
+            bool prediction = false;
+            unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
 
 
             if (!br->is_conditional) {
                 prediction = true;
             } else {
-            	//prediction = get_base_prediction(pc_index);
-            	prediction = get_actual_prediction(pc_index);
-				/*if(get_choice_prediction(pc_index)) {
-					prediction = get_local_prediction(pc_index);
-				} else {
-					prediction = get_global_prediction();
-				}*/
+            	if (br->is_call) {   // Call push return address in stack
+            		prediction = true;	// For now defaulting true
+            	} else if(br->is_return) {   //If pop restore return address
+            		prediction = true;	// For now defaulting true
+            	} else {				// Its branch predicting as taken or not taken
+            		 //Determine to use global or local predictors
+					prediction =  get_actual_prediction(pc_index);
+            	}
             }
-            //prediction = false;
+
             return prediction;   // true for taken, false for not taken
         }
 
@@ -200,15 +196,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken) {
     // argument (taken) indicating whether or not the branch was taken.
     void PREDICTOR::update_predictor(const branch_record_c* br, const op_state_c* os, bool taken)
         {
-		/* replace this code with your own */
-			unsigned int pc_index = (br->instruction_addr<<2) & 0x3FF;
-
-			//update_base_predictor(pc_index,taken);
-			update_actual_predictor(pc_index,taken);
-			/*update_local_history(pc_index,taken);
-			update_local_predictor(pc_index,taken);
-
-			update_global_predictor(taken);
-			update_choice_predictor(pc_index,taken);
-			update_path_history(taken);*/
+			/* replace this code with your own */
+			unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
+			update_actual_predictor(pc_index, taken);
         }
