@@ -156,13 +156,20 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
 			update_local_history(pc_index,taken);
 			return;
 		} else {
-			//Global = LOCAL
-			GlobalPredictor[g_val] = LocalPredictor[l_val];
-			GlobalTag[pc_index] = LocalTag[l_val];
-			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
-			update_global_predictor(taken);
-			update_global_history(taken);
-			return;
+       if( LocalTag[l_val].to_ulong() == 1) {
+  			//Global = LOCAL
+  			GlobalPredictor[g_val] = LocalPredictor[l_val];
+  			GlobalTag[pc_index] = LocalTag[l_val];
+  			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
+  			update_global_predictor(taken);
+  			update_global_history(taken);
+  			return;
+      } else {
+        update_local_predictor(pc_index,taken);
+			  update_local_history(pc_index,taken);
+        if( LocalTag[l_val].to_ulong() == 2)
+        LocalTag[l_val] = decrement(LocalTag[l_val]);
+      }
 		}
 
 	}
@@ -207,7 +214,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
         {
 			/* replace this code with your own */
 			unsigned int pc_index = (br->instruction_addr>>2) & 0x3FF;
-            unsigned int pc_tag = (br->instruction_addr>>22) & 0x3;
+            unsigned int pc_tag = 0x3;
 		//printf("IA: %0x\n", br->instruction_addr);
 			update_actual_predictor(pc_index, taken, pc_tag);
         }
