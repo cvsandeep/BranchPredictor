@@ -7,16 +7,36 @@
 #include <cstdlib>
 #include <time.h>
 
+#define TOTAL_STAGES 3
+#define TAG_ADDR_BITS 12  //12-bit:0.83; 10-bit:2.45; 8bit:7.765
+
+/////////////// STORAGE BUDGET JUSTIFICATION ////////////////
+// Total storage budget: 32KB + 17 bits
+// Total PHT counters: 2^17
+// Total PHT size = 2^17 * 2 bits/counter = 2^18 bits = 32KB
+// GlobalHistory size: 17 bits
+// Total Size = PHT size + GlobalHistory size
+/////////////////////////////////////////////////////////////
+// Each entry in the tag Pred Table is 15 bits
+struct TAGE
+{
+    std::bitset<3> Predictor;
+    std::bitset<8> tag;  // 3-bit:4.5; 5-bit:1.385; 8-bit:0.832
+    std::bitset<2> ctr;
+};
+
+static std::bitset<4> StageChooser (8);
 static std::bitset<2> BasePredictor[1<<14];
+
+static std::bitset<16> PathHistory;
+static std::bitset<131> GlobalHistory;
 
 static std::bitset<10> LocalHistory[1024];
 static std::bitset<2> LocalPredictor[1024];
 static std::bitset<2> LocalTag[1024];
 
 static std::bitset<2> GlobalPredictor[4096];
-static std::bitset<2> GlobalTag[1024];
-static std::bitset<16> PathHistory;
-static std::bitset<131> GlobalHistory;           
+static std::bitset<2> GlobalTag[1024];        
 
 /**********************************************************************
  *******************HELPER FUNCTIONS***********************************
@@ -51,18 +71,6 @@ inline std::bitset<N> decrement ( std::bitset<N> in ) {
     return in;
     }
 
-static inline uint32_t SatIncrement(uint32_t x, uint32_t max)
-{
-  if(x<max) return x+1;
-  return x;
-}
-
-static inline uint32_t SatDecrement(uint32_t x)
-{
-  if(x>0) return x-1;
-  return x;
-}
-
 /**********************************************************************
  *******************BASE PREDICTOR ************************************
  **********************************************************************/
@@ -77,10 +85,8 @@ inline bool get_base_prediction(unsigned int pc_index) {
 
 inline void update_base_predictor(unsigned int pc_index, bool taken) {
 	if (taken) {
-		if (!BasePredictor[pc_index].all())
 			BasePredictor[pc_index] = increment(BasePredictor[pc_index]);
 	} else {
-		if(BasePredictor[pc_index].any())
 			BasePredictor[pc_index] = decrement(BasePredictor[pc_index]);
 	}
 }
@@ -102,10 +108,8 @@ inline void update_local_history(unsigned int pc_index, bool taken) {
 inline void update_local_predictor(unsigned int pc_index, bool taken) {
 	unsigned int x = LocalHistory[pc_index].to_ulong();
 	if (taken) {
-		if (!LocalPredictor[x].all())
 			LocalPredictor[x] = increment(LocalPredictor[x]);
 	} else {
-		if(LocalPredictor[x].any())
 			LocalPredictor[x] = decrement(LocalPredictor[x]);
 	}
 }
@@ -132,11 +136,11 @@ inline void update_global_history(bool taken) {
 
 inline void update_global_predictor(bool taken) {
 	unsigned int x = PathHistory.to_ulong();
-	if(taken == true && !GlobalPredictor[x].all()) {
+	if(taken == true) {
 		GlobalPredictor[x] = increment(GlobalPredictor[x]);
 
 	}
-	else if(taken == false && GlobalPredictor[x].any()) {
+	else if(taken == false) {
 		GlobalPredictor[x] = decrement(GlobalPredictor[x]);
 	}
 }
@@ -206,32 +210,6 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
  *******************TAGE PREDICTOR **************************************
  **********************************************************************/
 
-#define TOTAL_STAGES 3
-
-/////////////// STORAGE BUDGET JUSTIFICATION ////////////////
-// Total storage budget: 32KB + 17 bits
-// Total PHT counters: 2^17
-// Total PHT size = 2^17 * 2 bits/counter = 2^18 bits = 32KB
-// GlobalHistory size: 17 bits
-// Total Size = PHT size + GlobalHistory size
-/////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////
-/////////////////////////////////////////////////////////////
-// Each entry in the tag Pred Table
-struct TAGE
-{
-    std::bitset<3> Predictor;
-    uint32_t tag;
-    std::bitset<2> ctr;
-};
-
-#define TAGPREDLOG 12
-static TAGE TagLoc[TOTAL_STAGES][1<<TAGPREDLOG];
-static std::bitset<4> StageChooser (8);
-uint32_t numTagPredEntries = (1 << TAGPREDLOG);
-
-
-
 static const std::bitset<2> one (1), two (2);
 // Folded History implementation ... from ghr (geometric length) -> compressed(target)
 struct CompressedHist
@@ -261,12 +239,6 @@ struct CompressedHist
   CompressedHist indexComp[TOTAL_STAGES];
   CompressedHist tagComp[2][TOTAL_STAGES];
 
-  // index had to be made global else recalculate for update
-
-  uint32_t clock1;
-  int clock_flip;
-
-
 inline void init_tage_predictor(void){
 
    // Next to initiating the taggedPredictors
@@ -290,7 +262,7 @@ inline void init_tage_predictor(void){
     {
         indexComp[i].compHist = 0;
         indexComp[i].geomLength = geometric[i];
-        indexComp[i].targetLength = TAGPREDLOG;
+        indexComp[i].targetLength = TAG_ADDR_BITS;
     }
 
     // next for the tag themselves
@@ -323,8 +295,6 @@ inline void init_tage_predictor(void){
             }
         }
     }
-       clock1 = 0;
-       clock_flip = 1;
 }
 
 // Predictions need to be global ?? recheck
@@ -332,6 +302,8 @@ bool FirstStagePred;
 bool NextStagePred;
 int FirstStage;
 int NextStage;
+
+static TAGE TagLoc[TOTAL_STAGES][1<<TAG_ADDR_BITS];
 static uint32_t TagIndex[TOTAL_STAGES];
 static uint32_t tag[TOTAL_STAGES];
 
@@ -349,15 +321,15 @@ inline bool get_tage_predictor(uint32_t PC) {
   // How to get index for each bank ??
   // bank 1
     // Hash of PC, PC >> index length important , GlobalHistory geometric, path info
-       TagIndex[0] = PC ^ (PC >> TAGPREDLOG) ^ indexComp[0].compHist ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAGPREDLOG);
-       TagIndex[1] = PC ^ (PC >> (TAGPREDLOG - 1)) ^ indexComp[1].compHist ^ (PathHistory.to_ulong() );
-       TagIndex[2] = PC ^ (PC >> (TAGPREDLOG - 2)) ^ indexComp[2].compHist ^ (PathHistory.to_ulong() & 31);
-       //TagIndex[3] = PC ^ (PC >> (TAGPREDLOG - 3)) ^ indexComp[3].compHist ^ (PHR & 7);  // 1 & 63 gives 3.358 // shuttle 31 and 15: 3.250 //ece 31 and 1: 3.252
+       TagIndex[0] = PC ^ (PC >> TAG_ADDR_BITS) ^ indexComp[0].compHist ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAG_ADDR_BITS);
+       TagIndex[1] = PC ^ (PC >> (TAG_ADDR_BITS - 1)) ^ indexComp[1].compHist ^ (PathHistory.to_ulong() );
+       TagIndex[2] = PC ^ (PC >> (TAG_ADDR_BITS - 2)) ^ indexComp[2].compHist ^ (PathHistory.to_ulong() & 31);
+       //TagIndex[3] = PC ^ (PC >> (TAG_ADDR_BITS - 3)) ^ indexComp[3].compHist ^ (PHR & 7);  // 1 & 63 gives 3.358 // shuttle 31 and 15: 3.250 //ece 31 and 1: 3.252
        /// These need to be masked   // shuttle : 1023 63 and 15: 3.254 // ece 1023, 31 and 1 : 3.254
        ////  63 and 7  and PC  -2 -4 -6 // 63 and 1 gives 3.256  // 63 and 7 s: // 31 and 7 : 3.243 best !
        for(int i = 0; i < TOTAL_STAGES; i++)
        {
-            TagIndex[i] = TagIndex[i] & ((1<<TAGPREDLOG) - 1);
+            TagIndex[i] = TagIndex[i] & ((1<<TAG_ADDR_BITS) - 1);
        }
 
        // Intialize Two stage before finding in the TAGE
@@ -473,7 +445,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
      				}
   			} else {
   					int count = 0;
-  					int bank_store[TOTAL_STAGES - 1] = {-1, -1};
+  					int bank_store[TOTAL_STAGES - 1] = {-1};
   					int matchBank = 0;
   					for (int i = 0; i < FirstStage; i++)
   					{
@@ -503,8 +475,9 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
     					  }
     				} //End For
   			} // Else
-  		}
-    }
+  		} // End Misprediction
+    } // End new_entry
+
     for (int i = 0; i < TOTAL_STAGES; i++)
     {
             indexComp[i].updateCompHist(GlobalHistory);
