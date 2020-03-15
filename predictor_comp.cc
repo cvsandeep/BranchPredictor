@@ -15,7 +15,8 @@ static std::bitset<2> LocalTag[1024];
 
 static std::bitset<2> GlobalPredictor[4096];
 static std::bitset<2> GlobalTag[1024];
-static std::bitset<12> PathHistory;
+static std::bitset<16> PathHistory;
+static std::bitset<131> GlobalHistory;           
 
 /**********************************************************************
  *******************HELPER FUNCTIONS***********************************
@@ -23,7 +24,7 @@ static std::bitset<12> PathHistory;
 template <size_t N>
 inline std::bitset<N> increment ( std::bitset<N> in ) {
     if(in.all())
-      return in;   
+      return in;
 //  add 1 to each value, and if it was 1 already, carry the 1 to the next.
     for ( size_t i = 0; i < N; ++i ) {
         if ( in[i] == 0 ) {  // There will be no carry
@@ -118,9 +119,15 @@ inline bool get_global_prediction(void) {
 	return GlobalPredictor[x][1];
 }
 
-inline void update_global_history(bool taken) {
+inline void update_path_history(unsigned int pc_index, bool taken) {
 	PathHistory =  (PathHistory << 1);
-	PathHistory[0] = taken;
+  if(pc_index & 1)
+	  PathHistory[0] = 1;
+}
+
+inline void update_global_history(bool taken) {
+	GlobalHistory =  (GlobalHistory << 1);
+	GlobalHistory[0] = taken;
 }
 
 inline void update_global_predictor(bool taken) {
@@ -153,7 +160,7 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
 	unsigned int l_val = LocalHistory[pc_index].to_ulong();
 	unsigned int g_val = PathHistory.to_ulong();
 	// get_local_prediction(pc_index)  get_global_prediction();
- 
+
 	//update_base_predictor(pc_index,taken);
 	if(BasePredictor[pc_index].to_ulong()){
 		if( get_base_prediction(pc_index) != taken) {
@@ -178,15 +185,15 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
 			GlobalPredictor[g_val] = LocalPredictor[l_val];
 			GlobalTag[pc_index] = LocalTag[l_val];
 			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
-			update_global_predictor(taken);
-			update_global_history(taken);
+			update_global_predictor( taken);
+			update_path_history(pc_index, taken);
 			return;
 		}
 
 	}
 	else if(GlobalTag[pc_index].to_ulong()) {
 		update_global_predictor(taken);
-		update_global_history(taken);
+		update_path_history(pc_index, taken);
 		return;
 	}
 	else{
@@ -203,40 +210,38 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
 
 /////////////// STORAGE BUDGET JUSTIFICATION ////////////////
 // Total storage budget: 32KB + 17 bits
-// Total PHT counters: 2^17 
+// Total PHT counters: 2^17
 // Total PHT size = 2^17 * 2 bits/counter = 2^18 bits = 32KB
-// GHR size: 17 bits
-// Total Size = PHT size + GHR size
+// GlobalHistory size: 17 bits
+// Total Size = PHT size + GlobalHistory size
 /////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////
 /////////////////////////////////////////////////////////////
 // Each entry in the tag Pred Table
-struct TAGE 
+struct TAGE
 {
     std::bitset<3> Predictor;
     uint32_t tag;
     std::bitset<2> ctr;
 };
-// 2^12 * 14 bits * 3 + 2^15
 
 #define TAGPREDLOG 12
 static TAGE TagLoc[TOTAL_STAGES][1<<TAGPREDLOG];
+static std::bitset<4> StageChooser (8);
 uint32_t numTagPredEntries = (1 << TAGPREDLOG);
 
 
-static uint32_t TagIndex[TOTAL_STAGES];
-static uint32_t tag[TOTAL_STAGES];
-  
+
 static const std::bitset<2> one (1), two (2);
 // Folded History implementation ... from ghr (geometric length) -> compressed(target)
 struct CompressedHist
 {
- /// Objective is to convert geomLengt of GHR into tagPredLog which is of length equal to the index of the corresponding bank
+ /// Objective is to convert geomLengt of GlobalHistory into tagPredLog which is of length equal to the index of the corresponding bank
     // It can be also used for tag when the final length would be the Tag
     uint32_t geomLength;
     uint32_t targetLength;
     uint32_t compHist;
-      
+
     void updateCompHist(std::bitset<131> ghr)
     {
         int mask = (1 << targetLength) - 1;
@@ -245,34 +250,28 @@ struct CompressedHist
             compHist  = (compHist << 1) + ghr[0];
             compHist ^= ((compHist & mask2) >> targetLength);
             compHist ^= mask1;
-            compHist &= mask;  
-         
-    }    
-};
+            compHist &= mask;
 
-  std::bitset<131> GHR;           // global history register
-  // 16 bit path history
-  int PHR;
-//  uint32_t  *bimodal;          // pattern history table
-  uint32_t  historyLength; // history length
+    }
+};
 
   //Tagged Predictors
   uint32_t geometric[TOTAL_STAGES];
   //Compressed Buffers
   CompressedHist indexComp[TOTAL_STAGES];
-  CompressedHist tagComp[2][TOTAL_STAGES]; 
- 
+  CompressedHist tagComp[2][TOTAL_STAGES];
+
   // index had to be made global else recalculate for update
 
   uint32_t clock1;
   int clock_flip;
-  int StageChooser;
-    
+
+
 inline void init_tage_predictor(void){
 
    // Next to initiating the taggedPredictors
-    
-    
+
+
     // Geometric lengths of history taken to consider correlation of different age.
     // Table 0 with the longest history as per PPM code
     geometric[0] = 130;
@@ -283,24 +282,24 @@ inline void init_tage_predictor(void){
      * geometric[0] = 200;
     geometric[1] = 80;
     geometric[2] = 20;
-    geometric[3] = 5;*/ 
-    
+    geometric[3] = 5;*/
+
     // Initializing Compressed Buffers.
     // first for index of the the tagged tables
     for(int i = 0; i < TOTAL_STAGES; i++)
     {
         indexComp[i].compHist = 0;
-        indexComp[i].geomLength = geometric[i]; 
+        indexComp[i].geomLength = geometric[i];
         indexComp[i].targetLength = TAGPREDLOG;
     }
-    
+
     // next for the tag themselves
-    
+
         // The tables have different tag lengths
         // T2 and T3 have tag length -> 8
         // T0 and T1 have tag length -> 9
         // second index indicates the Bank no.
-        // Reason for using two -> PPM paper... single 
+        // Reason for using two -> PPM paper... single
   // CSR is sensitive to periodic patterns in global history which is a common case
     for(int j = 0; j < 2 ; j++)
     {
@@ -313,7 +312,7 @@ inline void init_tage_predictor(void){
                 if(i < 2)
                 tagComp[j][i].targetLength = 9 ;
                 else
-                tagComp[j][i].targetLength = 9 ;    
+                tagComp[j][i].targetLength = 9 ;
             }
             else
             {
@@ -322,14 +321,10 @@ inline void init_tage_predictor(void){
                 else
                 tagComp[j][i].targetLength = 8 ;
             }
-        }   
-    }    
-
+        }
+    }
        clock1 = 0;
        clock_flip = 1;
-       PHR = 0;
-       GHR.reset();
-       StageChooser = 8;
 }
 
 // Predictions need to be global ?? recheck
@@ -337,10 +332,12 @@ bool FirstStagePred;
 bool NextStagePred;
 int FirstStage;
 int NextStage;
-  
-inline bool get_tage_predictor(uint32_t PC) {      
-      // Hash to get tag includes info about bank, pc and global history compressed   
-    // formula given in PPM paper 
+static uint32_t TagIndex[TOTAL_STAGES];
+static uint32_t tag[TOTAL_STAGES];
+
+inline bool get_tage_predictor(uint32_t PC) {
+      // Hash to get tag includes info about bank, pc and global history compressed
+    // formula given in PPM paper
     // pc[9:0] xor CSR1 xor (CSR2 << 1)
     for(int i = 0; i < TOTAL_STAGES; i++) {
        tag[i] = PC ^ tagComp[0][i].compHist ^ (tagComp[1][i].compHist << 1);
@@ -348,13 +345,13 @@ inline bool get_tage_predictor(uint32_t PC) {
        /// These need to be masked
      // 9 bit tags for T0 and T1 // 8 bit tags for T2 and T3
     }
-    
+
   // How to get index for each bank ??
   // bank 1
-    // Hash of PC, PC >> index length important , GHR geometric, path info         
-       TagIndex[0] = PC ^ (PC >> TAGPREDLOG) ^ indexComp[0].compHist ^ PHR ^ (PHR >> TAGPREDLOG);
-       TagIndex[1] = PC ^ (PC >> (TAGPREDLOG - 1)) ^ indexComp[1].compHist ^ (PHR );
-       TagIndex[2] = PC ^ (PC >> (TAGPREDLOG - 2)) ^ indexComp[2].compHist ^ (PHR & 31);
+    // Hash of PC, PC >> index length important , GlobalHistory geometric, path info
+       TagIndex[0] = PC ^ (PC >> TAGPREDLOG) ^ indexComp[0].compHist ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAGPREDLOG);
+       TagIndex[1] = PC ^ (PC >> (TAGPREDLOG - 1)) ^ indexComp[1].compHist ^ (PathHistory.to_ulong() );
+       TagIndex[2] = PC ^ (PC >> (TAGPREDLOG - 2)) ^ indexComp[2].compHist ^ (PathHistory.to_ulong() & 31);
        //TagIndex[3] = PC ^ (PC >> (TAGPREDLOG - 3)) ^ indexComp[3].compHist ^ (PHR & 7);  // 1 & 63 gives 3.358 // shuttle 31 and 15: 3.250 //ece 31 and 1: 3.252
        /// These need to be masked   // shuttle : 1023 63 and 15: 3.254 // ece 1023, 31 and 1 : 3.254
        ////  63 and 7  and PC  -2 -4 -6 // 63 and 1 gives 3.256  // 63 and 7 s: // 31 and 7 : 3.243 best !
@@ -362,21 +359,21 @@ inline bool get_tage_predictor(uint32_t PC) {
        {
             TagIndex[i] = TagIndex[i] & ((1<<TAGPREDLOG) - 1);
        }
-       
+
        // Intialize Two stage before finding in the TAGE
        FirstStagePred = -1;
        NextStagePred = -1;
        FirstStage = TOTAL_STAGES;
        NextStage = TOTAL_STAGES;
-       
-       //Search for a Tag match in first stage         
+
+       //Search for a Tag match in first stage
        for(int iterator = 0; iterator < TOTAL_STAGES; iterator++)
        {
             if(TagLoc[iterator][TagIndex[iterator]].tag == tag[iterator])
             {
                 FirstStage = iterator;
                 break;
-            }  
+            }
        }
        //Search for a Tag match in Next stage
       for(int iterator = FirstStage + 1; iterator < TOTAL_STAGES; iterator++)
@@ -385,19 +382,19 @@ inline bool get_tage_predictor(uint32_t PC) {
           {
               NextStage = iterator;
               break;
-          }  
-      }    
-    
-    if(NextStage < TOTAL_STAGES) // Found the value in the One of the stages
+          }
+      }
+
+    if(NextStage < TOTAL_STAGES)
      {
          NextStagePred = TagLoc[NextStage][TagIndex[NextStage]].Predictor[2];
-     } else {        
+     } else {
         NextStagePred = get_base_prediction(PC % (1<<14));
      }
- 
-    if(FirstStage < TOTAL_STAGES) // Found the value in the One of the stages
+
+    if(FirstStage < TOTAL_STAGES)
     {
-        if((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor.to_ulong()  != 3) ||(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor.to_ulong() != 4 ) || (TagLoc[FirstStage][TagIndex[FirstStage]].ctr != 0) || (StageChooser < 8))
+        if((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  != 3) ||(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor != 4 ) || (TagLoc[FirstStage][TagIndex[FirstStage]].ctr != 0) || (!StageChooser[3]))
         {
             FirstStagePred = TagLoc[FirstStage][TagIndex[FirstStage]].Predictor[2];
             return FirstStagePred;
@@ -406,31 +403,19 @@ inline bool get_tage_predictor(uint32_t PC) {
     return NextStagePred;
 }
 
-inline void update_tage_predictor(uint32_t PC, bool resolveDir){
+inline void update_tage_predictor(uint32_t PC, bool taken){
   bool strong_old_present = false;
-    bool new_entry = 0;    
-    bool predDir = get_tage_predictor(PC);
-    if (FirstStage < TOTAL_STAGES)
-    {
-        // As per update policy
-        // 1st update the useful counter
-        if ((predDir != NextStagePred))
-        {
-	    
-	    if (predDir == resolveDir)
-	    {
-
-		TagLoc[FirstStage][TagIndex[FirstStage]].ctr = increment(TagLoc[FirstStage][TagIndex[FirstStage]].ctr);
-
-	    }
-	    else
-	    {
-		TagLoc[FirstStage][TagIndex[FirstStage]].ctr = decrement(TagLoc[FirstStage][TagIndex[FirstStage]].ctr);
-	    }
-
-	}    
-	 // 2nd update the counters which provided the prediction  
-        if(resolveDir)
+  bool new_entry = 0;
+  bool ActualPred = get_tage_predictor(PC);
+  
+     update_global_history(taken);
+     update_path_history(PC, taken);    
+    
+    if (FirstStage >= TOTAL_STAGES) {
+      update_base_predictor((PC) % (1<<14), taken);
+    } else {
+	       // Update the Predictior
+        if(taken)
         {
             TagLoc[FirstStage][TagIndex[FirstStage]].Predictor = increment(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor);
         }
@@ -438,177 +423,96 @@ inline void update_tage_predictor(uint32_t PC, bool resolveDir){
         {
             TagLoc[FirstStage][TagIndex[FirstStage]].Predictor = decrement(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor);
         }
-    }
-    else
-    {
-        update_base_predictor((PC) % (1<<14), resolveDir);
-    }
-    // Check if the current Entry which gave the prediction is a newly allocated entry or not.
-	if (FirstStage < TOTAL_STAGES)
-	{
-	    
-	    if((TagLoc[FirstStage][TagIndex[FirstStage]].ctr == 0) &&((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor.to_ulong()  == 3) || (TagLoc[FirstStage][TagIndex[FirstStage]].Predictor.to_ulong()  == 4)))
-            {
-              new_entry = true;
-          		if (FirstStagePred != NextStagePred)
-          		  {
-          		    if (NextStagePred == resolveDir)
-                  {
-                        // Alternate prediction more useful is a counter to be of 4 bits
-                    		if (StageChooser < 15)
-                    		{  
-                            StageChooser++;
-                        }    
-                  } else if (StageChooser > 0) {
-                                  StageChooser--;
-                  }
-                 }
-	    }
-	}
-
-
-// Proceeding to allocation of the entry.
-    if((!new_entry) || (new_entry && (FirstStagePred != resolveDir)))
-    {    
-	if (((predDir != resolveDir) & (FirstStage > 0)))
-	  {
-                    
-	    for (int i = 0; i < FirstStage; i++)
-	      {
-		if (TagLoc[i][TagIndex[i]].ctr == 0);
-                strong_old_present = true;
-
-	      }
-// If no entry useful than decrease useful bits of all entries but do not allocate
-	    if (strong_old_present == false)
-	    {
-		for (int i = FirstStage - 1; i >= 0; i--)
-		{
-		    TagLoc[i][TagIndex[i]].ctr = decrement(TagLoc[i][TagIndex[i]].ctr);
-                }
-            }
-	    else
-	      {
-
-                srand(time(NULL));
-                int randNo = rand() % 100;
-                int count = 0;
-                int bank_store[TOTAL_STAGES - 1] = {-1, -1};
-                int matchBank = 0;
-                for (int i = 0; i < FirstStage; i++)
-                {
-                    if (TagLoc[i][TagIndex[i]].ctr == 0)
-                    {
-                        count++;
-                        bank_store[i] = i;
-                    }
-                }  
-                if(count == 1)
-                {
-                    matchBank = bank_store[0];
-                }
-                else if(count > 1)
-                {
-                     if(randNo > 33 && randNo <= 99)
-                    {
-                        matchBank = bank_store[(count-1)];
-                    }
-                    else
-                    {
-                        matchBank = bank_store[(count-2)];
-                    }   
-                }
-
-
-		for (int i = matchBank; i > -1; i--)
-		{
-		    if ((TagLoc[i][TagIndex[i]].ctr == 0))
-		      {
-                        if(resolveDir)
-                        {    
-                            TagLoc[i][TagIndex[i]].Predictor = 4;
-                        }
-                        else
-                        {
-                            TagLoc[i][TagIndex[i]].Predictor = 3;
-                        }    
-                            TagLoc[i][TagIndex[i]].tag = tag[i];
-                            TagLoc[i][TagIndex[i]].ctr = 0;
-			break; // Only 1 entry allocated
-		     }
-                }
-
-	    }
-
-	}
-    }    
-
-
-// Periodic Useful bit Reset Logic ( Important so as to optimize compared to PPM paper)
-	clock1++;
-        //for every 256 K instruction 1st MSB than LSB
-	if(clock1 == (256*1024))
+        
+        // Update the counters if next stage is mispredicted.
+        if ((ActualPred != NextStagePred))
         {
-            // reset clock
-            clock1 = 0;
-            if(clock_flip == 1)
-            {
-                // this is the 1st time
-                clock_flip = 0;
+    			if (ActualPred == taken)
+    			{
+    			  TagLoc[FirstStage][TagIndex[FirstStage]].ctr = increment(TagLoc[FirstStage][TagIndex[FirstStage]].ctr);
+    			}
+    			else
+    			{
+    			  TagLoc[FirstStage][TagIndex[FirstStage]].ctr = decrement(TagLoc[FirstStage][TagIndex[FirstStage]].ctr);
+    			}
+        }
+    }
+
+    // Check if the current Entry which gave the prediction is a newly allocated entry or not.
+	     if((TagLoc[FirstStage][TagIndex[FirstStage]].ctr == 0) &&((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 3) || (TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 4)))
+    		{
+    		  new_entry = true;
+    			if (FirstStagePred != NextStagePred)
+    			  {
+        				if (NextStagePred == taken)
+        			  {
+        						StageChooser=increment(StageChooser);
+        			  } else {
+    							  StageChooser=decrement(StageChooser);
+        			  }
+    			 }
+    		}
+
+    // Proceeding to allocation of the entry.
+    if((!new_entry) || (new_entry && (FirstStagePred != taken)))
+    {
+  	    if (((ActualPred != taken) & (FirstStage > 0)))
+  		  {
+  			  for (int i = 0; i < FirstStage; i++)
+  			  {
+      			if (TagLoc[i][TagIndex[i]].ctr == 0){
+      					strong_old_present = true;
             }
-            else
-            {
-                clock_flip = 1;
-            }
-
-	    if(clock_flip == 1)
-            {// MSB turn
-                for (int jj = 0; jj < TOTAL_STAGES; jj++)
-                {    
-                    for (uint32_t ii = 0; ii < numTagPredEntries; ii++)
-                    {
-                        TagLoc[jj][ii].ctr = TagLoc[jj][ii].ctr & one;
-                    }
-                }
-            }    
-            else
-            {// LSB turn
-                for (int jj = 0; jj < TOTAL_STAGES; jj++)
-                   {    
-                       for (uint32_t ii = 0; ii < numTagPredEntries; ii++)
-                       {
-                           TagLoc[jj][ii].ctr = TagLoc[jj][ii].ctr & two;
-                       }
-                   }
-
-	    }
-
-	}
-
-	
-  // update the GHR
-  GHR = (GHR << 1);
-
-  if(resolveDir){
-    GHR.set(0,1); 
-  }
-
+  			  }
+  	// If no entry useful than decrease useful bits of all entries but do not allocate
+  			if (strong_old_present == false)
+  			{
+      			for (int i = FirstStage - 1; i >= 0; i--)
+      			{
+      				TagLoc[i][TagIndex[i]].ctr = decrement(TagLoc[i][TagIndex[i]].ctr);
+     				}
+  			} else {
+  					int count = 0;
+  					int bank_store[TOTAL_STAGES - 1] = {-1, -1};
+  					int matchBank = 0;
+  					for (int i = 0; i < FirstStage; i++)
+  					{
+  						if (TagLoc[i][TagIndex[i]].ctr == 0)
+  						{
+  							count++;
+  							bank_store[i] = i;
+  						}
+  					}
+            matchBank = bank_store[count-1];
+  					
+    				for (int i = matchBank; i > -1; i--)
+    				{
+    					if ((TagLoc[i][TagIndex[i]].ctr == 0))
+    					  {
+    								if(taken)
+    								{
+    									TagLoc[i][TagIndex[i]].Predictor = 4;
+    								}
+    								else
+    								{
+    									TagLoc[i][TagIndex[i]].Predictor = 3;
+    								}
+    									TagLoc[i][TagIndex[i]].tag = tag[i];
+    									TagLoc[i][TagIndex[i]].ctr = 0;
+    					        break; // Only 1 entry allocated
+    					  }
+    				} //End For
+  			} // Else
+  		}
+    }
     for (int i = 0; i < TOTAL_STAGES; i++)
     {
-                
-            indexComp[i].updateCompHist(GHR);
-            tagComp[0][i].updateCompHist(GHR);
-            tagComp[1][i].updateCompHist(GHR);
-            
+            indexComp[i].updateCompHist(GlobalHistory);
+            tagComp[0][i].updateCompHist(GlobalHistory);
+            tagComp[1][i].updateCompHist(GlobalHistory);
+
     }
-  // PHR update is simple, jus take the last bit ??
-    // Always Limited to 16 bits as per paper.
-    PHR = (PHR << 1); 
-    if(PC & 1)
-    {
-        PHR = PHR + 1;
-    }
-    PHR = (PHR & ((1 << 16) - 1));
+    //Done
 }
 
 
