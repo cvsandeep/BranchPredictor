@@ -7,27 +7,21 @@
 #include <cstdlib>
 #include <time.h>
 
+/* Total size is 12K for 2 statges and 18k for 3 stages*/
+#define BASE_ADDR_BITS 8
+static std::bitset<2> BasePredictor[1<<BASE_ADDR_BITS];
+
 #define TOTAL_STAGES 3
 #define TAG_ADDR_BITS 12  //12-bit:0.83; 10-bit:2.45; 8bit:7.765
-
-/////////////// STORAGE BUDGET JUSTIFICATION ////////////////
-// Total storage budget: 32KB + 17 bits
-// Total PHT counters: 2^17
-// Total PHT size = 2^17 * 2 bits/counter = 2^18 bits = 32KB
-// GlobalHistory size: 17 bits
-// Total Size = PHT size + GlobalHistory size
-/////////////////////////////////////////////////////////////
-// Each entry in the tag Pred Table is 15 bits
-struct TAGE
+struct TAGE  // Each entry in the tag Pred Table is 13 bits
 {
     std::bitset<3> Predictor;
-    std::bitset<8> tag;  // 3-bit:4.5; 5-bit:1.385; 8-bit:0.832
+    std::bitset<7> tag;  // 3-bit:4.5; 5-bit:1.385; 7-bit:0.857 8-bit:0.832
     std::bitset<2> ctr;
 };
+static TAGE TagLoc[TOTAL_STAGES][1<<TAG_ADDR_BITS];
 
 static std::bitset<4> StageChooser (8);
-static std::bitset<2> BasePredictor[1<<14];
-
 static std::bitset<16> PathHistory;
 static std::bitset<131> GlobalHistory;
 
@@ -37,6 +31,7 @@ static std::bitset<2> LocalTag[1024];
 
 static std::bitset<2> GlobalPredictor[4096];
 static std::bitset<2> GlobalTag[1024];        
+
 
 /**********************************************************************
  *******************HELPER FUNCTIONS***********************************
@@ -303,7 +298,6 @@ bool NextStagePred;
 int FirstStage;
 int NextStage;
 
-static TAGE TagLoc[TOTAL_STAGES][1<<TAG_ADDR_BITS];
 static uint32_t TagIndex[TOTAL_STAGES];
 static uint32_t tag[TOTAL_STAGES];
 
@@ -361,7 +355,7 @@ inline bool get_tage_predictor(uint32_t PC) {
      {
          NextStagePred = TagLoc[NextStage][TagIndex[NextStage]].Predictor[2];
      } else {
-        NextStagePred = get_base_prediction(PC % (1<<14));
+        NextStagePred = get_base_prediction(PC % (1<<BASE_ADDR_BITS));
      }
 
     if(FirstStage < TOTAL_STAGES)
@@ -384,7 +378,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
      update_path_history(PC, taken);    
     
     if (FirstStage >= TOTAL_STAGES) {
-      update_base_predictor((PC) % (1<<14), taken);
+      update_base_predictor((PC) % (1<<BASE_ADDR_BITS), taken);
     } else {
 	       // Update the Predictior
         if(taken)
