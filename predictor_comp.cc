@@ -11,7 +11,7 @@
 #define BASE_ADDR_BITS 8
 static std::bitset<2> BasePredictor[1<<BASE_ADDR_BITS];
 
-#define TOTAL_STAGES 3
+#define TOTAL_STAGES 2
 #define TAG_ADDR_BITS 12  //12-bit:0.83; 10-bit:2.45; 8bit:7.765
 struct TAGE  // Each entry in the tag Pred Table is 13 bits
 {
@@ -36,6 +36,8 @@ static std::bitset<2> GlobalTag[1024];
 /**********************************************************************
  *******************HELPER FUNCTIONS***********************************
  **********************************************************************/
+static const std::bitset<2> one (1), two (2);
+
 template <size_t N>
 inline std::bitset<N> increment ( std::bitset<N> in ) {
     if(in.all())
@@ -205,23 +207,18 @@ inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned i
  *******************TAGE PREDICTOR **************************************
  **********************************************************************/
 
-static const std::bitset<2> one (1), two (2);
 // Folded History implementation ... from ghr (geometric length) -> compressed(target)
-struct CompressedHist
+struct FoldHistory
 {
- /// Objective is to convert geomLengt of GlobalHistory into tagPredLog which is of length equal to the index of the corresponding bank
-    // It can be also used for tag when the final length would be the Tag
-    uint32_t geomLength;
-    uint32_t targetLength;
+    uint32_t HistLength;
     uint32_t compHist;
-
-    void updateCompHist(std::bitset<131> ghr)
+    void UpdateFoldHist(std::bitset<131> ghr)
     {
-        int mask = (1 << targetLength) - 1;
-        int mask1 = ghr[geomLength] << (geomLength % targetLength);
-        int mask2 = (1 << targetLength);
+        int mask = (1 << 8) - 1;
+        int mask1 = ghr[HistLength] << (HistLength % 8);
+        int mask2 = (1 << 8);
             compHist  = (compHist << 1) + ghr[0];
-            compHist ^= ((compHist & mask2) >> targetLength);
+            compHist ^= ((compHist & mask2) >> 8);
             compHist ^= mask1;
             compHist &= mask;
 
@@ -229,65 +226,19 @@ struct CompressedHist
 };
 
   //Tagged Predictors
-  uint32_t geometric[TOTAL_STAGES];
+  uint32_t geometric[TOTAL_STAGES] = {130,44};
   //Compressed Buffers
-  CompressedHist indexComp[TOTAL_STAGES];
-  CompressedHist tagComp[2][TOTAL_STAGES];
+ static FoldHistory indexComp[TOTAL_STAGES];
+ static FoldHistory tagComp[2][TOTAL_STAGES];
 
 inline void init_tage_predictor(void){
 
-   // Next to initiating the taggedPredictors
-
-
-    // Geometric lengths of history taken to consider correlation of different age.
-    // Table 0 with the longest history as per PPM code
-    geometric[0] = 130;
-    geometric[1] = 44;
-    geometric[2] = 15;
-    //geometric[3] = 5;
-    /*this gives 3.41 MPKI !!
-     * geometric[0] = 200;
-    geometric[1] = 80;
-    geometric[2] = 20;
-    geometric[3] = 5;*/
-
-    // Initializing Compressed Buffers.
-    // first for index of the the tagged tables
-    for(int i = 0; i < TOTAL_STAGES; i++)
-    {
-        indexComp[i].compHist = 0;
-        indexComp[i].geomLength = geometric[i];
-        indexComp[i].targetLength = TAG_ADDR_BITS;
-    }
-
-    // next for the tag themselves
-
-        // The tables have different tag lengths
-        // T2 and T3 have tag length -> 8
-        // T0 and T1 have tag length -> 9
-        // second index indicates the Bank no.
-        // Reason for using two -> PPM paper... single
-  // CSR is sensitive to periodic patterns in global history which is a common case
     for(int j = 0; j < 2 ; j++)
     {
         for(int i=0; i < TOTAL_STAGES; i++)
         {
-            tagComp[j][i].compHist = 0;
-            tagComp[j][i].geomLength = geometric[i];
-            if(j == 0)
-            {
-                if(i < 2)
-                tagComp[j][i].targetLength = 9 ;
-                else
-                tagComp[j][i].targetLength = 9 ;
-            }
-            else
-            {
-                if(i < 2)
-                tagComp[j][i].targetLength = 8 ;
-                else
-                tagComp[j][i].targetLength = 8 ;
-            }
+            tagComp[j][i].HistLength = geometric[i];
+            indexComp[i].HistLength = geometric[i];
         }
     }
 }
@@ -302,29 +253,14 @@ static uint32_t TagIndex[TOTAL_STAGES];
 static uint32_t tag[TOTAL_STAGES];
 
 inline bool get_tage_predictor(uint32_t PC) {
-      // Hash to get tag includes info about bank, pc and global history compressed
-    // formula given in PPM paper
-    // pc[9:0] xor CSR1 xor (CSR2 << 1)
-    for(int i = 0; i < TOTAL_STAGES; i++) {
-       tag[i] = PC ^ tagComp[0][i].compHist ^ (tagComp[1][i].compHist << 1);
-       tag[i] &= ((1<<9)-1);
-       /// These need to be masked
-     // 9 bit tags for T0 and T1 // 8 bit tags for T2 and T3
-    }
 
-  // How to get index for each bank ??
-  // bank 1
-    // Hash of PC, PC >> index length important , GlobalHistory geometric, path info
-       TagIndex[0] = PC ^ (PC >> TAG_ADDR_BITS) ^ indexComp[0].compHist ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAG_ADDR_BITS);
-       TagIndex[1] = PC ^ (PC >> (TAG_ADDR_BITS - 1)) ^ indexComp[1].compHist ^ (PathHistory.to_ulong() );
-       TagIndex[2] = PC ^ (PC >> (TAG_ADDR_BITS - 2)) ^ indexComp[2].compHist ^ (PathHistory.to_ulong() & 31);
-       //TagIndex[3] = PC ^ (PC >> (TAG_ADDR_BITS - 3)) ^ indexComp[3].compHist ^ (PHR & 7);  // 1 & 63 gives 3.358 // shuttle 31 and 15: 3.250 //ece 31 and 1: 3.252
-       /// These need to be masked   // shuttle : 1023 63 and 15: 3.254 // ece 1023, 31 and 1 : 3.254
-       ////  63 and 7  and PC  -2 -4 -6 // 63 and 1 gives 3.256  // 63 and 7 s: // 31 and 7 : 3.243 best !
-       for(int i = 0; i < TOTAL_STAGES; i++)
-       {
-            TagIndex[i] = TagIndex[i] & ((1<<TAG_ADDR_BITS) - 1);
-       }
+        TagIndex[0] = PC ^ (PC >> TAG_ADDR_BITS) ^ indexComp[0].compHist ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAG_ADDR_BITS);
+        TagIndex[1] = PC ^ (PC >> (TAG_ADDR_BITS - 1)) ^ indexComp[1].compHist ^ (PathHistory.to_ulong() );
+        for(int i = 0; i < TOTAL_STAGES; i++) {
+         tag[i] = PC ^ tagComp[0][i].compHist ^ (tagComp[1][i].compHist << 1);
+         tag[i] &= ((1<<9)-1);
+         TagIndex[i] = TagIndex[i] & ((1<<TAG_ADDR_BITS) - 1);
+        }
 
        // Intialize Two stage before finding in the TAGE
        FirstStagePred = -1;
@@ -375,7 +311,14 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
   bool ActualPred = get_tage_predictor(PC);
   
      update_global_history(taken);
-     update_path_history(PC, taken);    
+     update_path_history(PC, taken); 
+     for (int i = 0; i < TOTAL_STAGES; i++)
+    {
+            indexComp[i].UpdateFoldHist(GlobalHistory);
+            tagComp[0][i].UpdateFoldHist(GlobalHistory);
+            tagComp[1][i].UpdateFoldHist(GlobalHistory);
+
+    }   
     
     if (FirstStage >= TOTAL_STAGES) {
       update_base_predictor((PC) % (1<<BASE_ADDR_BITS), taken);
@@ -472,13 +415,6 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
   		} // End Misprediction
     } // End new_entry
 
-    for (int i = 0; i < TOTAL_STAGES; i++)
-    {
-            indexComp[i].updateCompHist(GlobalHistory);
-            tagComp[0][i].updateCompHist(GlobalHistory);
-            tagComp[1][i].updateCompHist(GlobalHistory);
-
-    }
     //Done
 }
 
