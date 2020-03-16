@@ -6,32 +6,42 @@
 #include <bitset>
 #include <cstdlib>
 #include <time.h>
+//MAX-32800 bits
+/*
+BAse- 2^8 x 2  =2^9 = 512 bits + 150 = 662
+Tage - 2^12 enteries and 13 bit * 2 = 106496 bits;
+---- 13KB ----*/
+/*
+BAse- 2^8 x 2  =2^9 = 512 bits + 150 = 662
+Tage - 2^12 enteries and 7 bit * 2 = 57344 bits;
+---- 5KB ----*/
 
-/* Total size is 12K for 2 statges and 18k for 3 stages*/
-#define BASE_ADDR_BITS 8
+/*
+Base- 2^8 x 2  =2^9 = 512 bits + 150 = 662
+Tage - 2^11 enteries and 8 bit * 2 = 32768 bits;
+---- 4KB ----*/
+
+/*
+Base- 2^11 x 2  =2^12 = 4096 bits + 150 = 4246
+Tage - 2^11 enteries and 7 bit * 2 = 32768 bits;
+---- =32768 bits = 4KB ----*/
+
+#define BASE_ADDR_BITS 11
 static std::bitset<2> BasePredictor[1<<BASE_ADDR_BITS];
 
 #define TOTAL_STAGES 2
-#define TAG_ADDR_BITS 12  //12-bit:0.83; 10-bit:2.45; 8bit:7.765
+#define TAG_ADDR_BITS 11  //12-bit:0.83; 10-bit:2.45; 8bit:7.765
 struct TAGE  // Each entry in the tag Pred Table is 13 bits
 {
-    std::bitset<3> Predictor;
-    std::bitset<7> tag;  // 3-bit:4.5; 5-bit:1.385; 7-bit:0.857 8-bit:0.832
-    std::bitset<2> ctr;
+    std::bitset<2> Predictor;
+    std::bitset<5> tag;  // 3-bit:4.5; 5-bit:1.385; 7-bit:0.857 8-bit:0.832
+    std::bitset<2> ctr;  // Temporary local counter
 };
 static TAGE TagLoc[TOTAL_STAGES][1<<TAG_ADDR_BITS];
 
 static std::bitset<4> StageChooser (8);
 static std::bitset<16> PathHistory;
 static std::bitset<131> GlobalHistory;
-
-static std::bitset<10> LocalHistory[1024];
-static std::bitset<2> LocalPredictor[1024];
-static std::bitset<2> LocalTag[1024];
-
-static std::bitset<2> GlobalPredictor[4096];
-static std::bitset<2> GlobalTag[1024];        
-
 
 /**********************************************************************
  *******************HELPER FUNCTIONS***********************************
@@ -89,41 +99,12 @@ inline void update_base_predictor(unsigned int pc_index, bool taken) {
 }
 
 /**********************************************************************
- *******************LOCAL PREDICTOR ***********************************
+ *******************GLOBAL HISTORY  ***********************************
  **********************************************************************/
-
-inline bool get_local_prediction(unsigned int pc_index) {
-	unsigned int x = LocalHistory[pc_index].to_ulong();
-	return LocalPredictor[x][1];
-}
-
-inline void update_local_history(unsigned int pc_index, bool taken) {
-	LocalHistory[pc_index] <<= 1;
-	LocalHistory[pc_index][0] = taken;
-}
-
-inline void update_local_predictor(unsigned int pc_index, bool taken) {
-	unsigned int x = LocalHistory[pc_index].to_ulong();
-	if (taken) {
-			LocalPredictor[x] = increment(LocalPredictor[x]);
-	} else {
-			LocalPredictor[x] = decrement(LocalPredictor[x]);
-	}
-}
-
-/**********************************************************************
- *******************GLOBAL PREDICTOR***********************************
- **********************************************************************/
-
-inline bool get_global_prediction(void) {
-	unsigned int x = PathHistory.to_ulong();
-	return GlobalPredictor[x][1];
-}
 
 inline void update_path_history(unsigned int pc_index, bool taken) {
 	PathHistory =  (PathHistory << 1);
-  if(pc_index & 1)
-	  PathHistory[0] = 1;
+  PathHistory[0] = taken;
 }
 
 inline void update_global_history(bool taken) {
@@ -131,77 +112,7 @@ inline void update_global_history(bool taken) {
 	GlobalHistory[0] = taken;
 }
 
-inline void update_global_predictor(bool taken) {
-	unsigned int x = PathHistory.to_ulong();
-	if(taken == true) {
-		GlobalPredictor[x] = increment(GlobalPredictor[x]);
 
-	}
-	else if(taken == false) {
-		GlobalPredictor[x] = decrement(GlobalPredictor[x]);
-	}
-}
-
-/**********************************************************************
- *******************MY PREDICTOR **************************************
- **********************************************************************/
-inline bool get_actual_prediction(unsigned int pc_index) {
-	// get_local_prediction(pc_index)  get_global_prediction();
- 	unsigned int l_val = LocalHistory[pc_index].to_ulong();
-	//unsigned int g_val = PathHistory.to_ulong();
-	if( GlobalTag[pc_index].to_ulong())
-		return get_global_prediction();
-	else if( LocalTag[l_val].to_ulong())
-		return get_local_prediction(pc_index);
-	else
-		return get_base_prediction(pc_index);
-}
-
-inline void update_actual_predictor(unsigned int pc_index,bool taken, unsigned int pc_tag) {
-	unsigned int l_val = LocalHistory[pc_index].to_ulong();
-	unsigned int g_val = PathHistory.to_ulong();
-	// get_local_prediction(pc_index)  get_global_prediction();
-
-	//update_base_predictor(pc_index,taken);
-	if(BasePredictor[pc_index].to_ulong()){
-		if( get_base_prediction(pc_index) != taken) {
-		LocalPredictor[l_val] = BasePredictor[pc_index];
-		LocalTag[l_val] = pc_tag;
-		update_local_history(pc_index,taken);
-		return;
-		}
-		else{
-			update_base_predictor(pc_index,taken);
-			return;
-		}
-
-	}
-	else if( LocalTag[l_val].to_ulong()) {
-		if(get_local_prediction(pc_index) == taken) {
-			update_local_predictor(pc_index,taken);
-			update_local_history(pc_index,taken);
-			return;
-		} else {
-			//Global = LOCAL
-			GlobalPredictor[g_val] = LocalPredictor[l_val];
-			GlobalTag[pc_index] = LocalTag[l_val];
-			LocalTag[l_val][0] = 0; LocalTag[l_val][1] = 0;
-			update_global_predictor( taken);
-			update_path_history(pc_index, taken);
-			return;
-		}
-
-	}
-	else if(GlobalTag[pc_index].to_ulong()) {
-		update_global_predictor(taken);
-		update_path_history(pc_index, taken);
-		return;
-	}
-	else{
-		update_base_predictor(pc_index,taken);
-	}
-	return;
-}
 
 /**********************************************************************
  *******************TAGE PREDICTOR **************************************
@@ -228,8 +139,8 @@ struct FoldHistory
   //Tagged Predictors
   uint32_t geometric[TOTAL_STAGES] = {130,44};
   //Compressed Buffers
- static FoldHistory indexComp[TOTAL_STAGES];
- static FoldHistory tagComp[2][TOTAL_STAGES];
+ static FoldHistory indexComp[TOTAL_STAGES];  // For indexing the tag
+ static FoldHistory tagComp[2][TOTAL_STAGES]; // Tag value
 
 inline void init_tage_predictor(void){
 
@@ -237,6 +148,7 @@ inline void init_tage_predictor(void){
     {
         for(int i=0; i < TOTAL_STAGES; i++)
         {
+            //Updating history length for index and tag.
             tagComp[j][i].HistLength = geometric[i];
             indexComp[i].HistLength = geometric[i];
         }
@@ -283,16 +195,19 @@ inline bool get_tage_predictor(uint32_t PC) {
           if(TagLoc[iterator][TagIndex[iterator]].tag == tag[iterator])
           {
               NextStage = iterator;
-              NextStagePred = TagLoc[NextStage][TagIndex[NextStage]].Predictor[2];
+              NextStagePred = TagLoc[NextStage][TagIndex[NextStage]].Predictor[1];
               break;
           }
       }
 
     if(FirstStage < TOTAL_STAGES)
     {
-        if((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  != 3) ||(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor != 4 ) || (TagLoc[FirstStage][TagIndex[FirstStage]].ctr != 0) || (!StageChooser[3]))
+        // Check if it is in strong STate
+        // Check if this stage is choosen
+        // Not a new entry
+        if((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  != 1) ||(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor != 2 ) || (TagLoc[FirstStage][TagIndex[FirstStage]].ctr != 0) || (!StageChooser[3]))
         {
-            FirstStagePred = TagLoc[FirstStage][TagIndex[FirstStage]].Predictor[2];
+            FirstStagePred = TagLoc[FirstStage][TagIndex[FirstStage]].Predictor[1];
             return FirstStagePred;
         }
     }
@@ -304,8 +219,9 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
   bool new_entry = 0;
   bool ActualPred = get_tage_predictor(PC);
   
-     update_global_history(taken);
-     update_path_history(PC, taken); 
+     update_global_history(taken);   // Global History used for tag  for index and tag
+     update_path_history(PC, taken); // Path History is only 12 bit is used for indexing
+     
      for (int i = 0; i < TOTAL_STAGES; i++)
     {
             indexComp[i].UpdateFoldHist(GlobalHistory);
@@ -342,7 +258,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
     }
 
     // Check if the current Entry which gave the prediction is a newly allocated entry or not.
-	     if((TagLoc[FirstStage][TagIndex[FirstStage]].ctr == 0) &&((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 3) || (TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 4)))
+	     if((TagLoc[FirstStage][TagIndex[FirstStage]].ctr == 0) &&((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 1) || (TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 2)))
     		{
     		  new_entry = true;
     			if (FirstStagePred != NextStagePred)
@@ -394,11 +310,11 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
     					  {
     								if(taken)
     								{
-    									TagLoc[i][TagIndex[i]].Predictor = 4;
+    									TagLoc[i][TagIndex[i]].Predictor = 2;
     								}
     								else
     								{
-    									TagLoc[i][TagIndex[i]].Predictor = 3;
+    									TagLoc[i][TagIndex[i]].Predictor = 1;
     								}
     									TagLoc[i][TagIndex[i]].tag = tag[i];
     									TagLoc[i][TagIndex[i]].ctr = 0;
