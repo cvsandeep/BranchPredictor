@@ -118,29 +118,29 @@ inline void update_global_history(bool taken) {
  *******************TAGE PREDICTOR **************************************
  **********************************************************************/
 
-// Folded History implementation ... from ghr (geometric length) -> compressed(target)
+// Folded History implementation ... from ghr (HistoryLen length) -> compressed(target)
 struct FoldHistory
 {
     uint32_t HistLength;
-    uint32_t compHist;
+    uint32_t FoldComp;
     void UpdateFoldHist(std::bitset<131> ghr)
     {
-        int mask = (1 << 8) - 1;
+        // Xor bits of chunk of Global history into a byte 
+        int mask = 0xFF;
         int mask1 = ghr[HistLength] << (HistLength % 8);
-        int mask2 = (1 << 8);
-            compHist  = (compHist << 1) + ghr[0];
-            compHist ^= ((compHist & mask2) >> 8);
-            compHist ^= mask1;
-            compHist &= mask;
+        int mask2 = 0x100;
+            FoldComp  = (FoldComp << 1) + ghr[0];
+            FoldComp ^= ((FoldComp & mask2) >> 8);
+            FoldComp ^= mask1;
+            FoldComp &= mask;
 
     }
 };
 
-  //Tagged Predictors
-  uint32_t geometric[TOTAL_STAGES] = {130,44};
-  //Compressed Buffers
- static FoldHistory indexComp[TOTAL_STAGES];  // For indexing the tag
- static FoldHistory tagComp[2][TOTAL_STAGES]; // Tag value
+
+ uint32_t HistoryLen[TOTAL_STAGES] = {130,44};
+ static FoldHistory IndexBuff[TOTAL_STAGES];  // For indexing the tag
+ static FoldHistory TagBuff[2][TOTAL_STAGES]; // Tag value
 
 inline void init_tage_predictor(void){
 
@@ -149,8 +149,8 @@ inline void init_tage_predictor(void){
         for(int i=0; i < TOTAL_STAGES; i++)
         {
             //Updating history length for index and tag.
-            tagComp[j][i].HistLength = geometric[i];
-            indexComp[i].HistLength = geometric[i];
+            TagBuff[j][i].HistLength = HistoryLen[i];
+            IndexBuff[i].HistLength = HistoryLen[i];
         }
     }
 }
@@ -166,11 +166,13 @@ static uint32_t tag[TOTAL_STAGES];
 
 inline bool get_tage_predictor(uint32_t PC) {
 
-        TagIndex[0] = PC ^ (PC >> TAG_ADDR_BITS) ^ indexComp[0].compHist ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAG_ADDR_BITS);
-        TagIndex[1] = PC ^ (PC >> (TAG_ADDR_BITS - 1)) ^ indexComp[1].compHist ^ (PathHistory.to_ulong() );
+        // CSR bits ^ pc[9 : 0] ^ pc[19 : 10] nextstage  pc[9 : 0] ^ pc[19 : 10] ^ h[9 : 0].
+        TagIndex[0] = PC ^ (PC >> TAG_ADDR_BITS) ^ IndexBuff[0].FoldComp ^ PathHistory.to_ulong() ^ (PathHistory.to_ulong() >> TAG_ADDR_BITS);
+        TagIndex[1] = PC ^ (PC >> (TAG_ADDR_BITS - 1)) ^ IndexBuff[1].FoldComp ^ (PathHistory.to_ulong() );
         for(int i = 0; i < TOTAL_STAGES; i++) {
-         tag[i] = PC ^ tagComp[0][i].compHist ^ (tagComp[1][i].compHist << 1);
-         tag[i] &= ((1<<9)-1);
+        //tag = pc[7 : 0] ^ CSR1 ^ (CSR2 << 1).
+         tag[i] = PC ^ TagBuff[0][i].FoldComp ^ (TagBuff[1][i].FoldComp << 1);
+         tag[i] &= 0x1FF;
          TagIndex[i] = TagIndex[i] & ((1<<TAG_ADDR_BITS) - 1);
         }
 
@@ -215,7 +217,7 @@ inline bool get_tage_predictor(uint32_t PC) {
 }
 
 inline void update_tage_predictor(uint32_t PC, bool taken){
-  bool strong_old_present = false;
+  bool FoundSpace = false;
   bool new_entry = 0;
   bool ActualPred = get_tage_predictor(PC);
   
@@ -224,9 +226,9 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
      
      for (int i = 0; i < TOTAL_STAGES; i++)
     {
-            indexComp[i].UpdateFoldHist(GlobalHistory);
-            tagComp[0][i].UpdateFoldHist(GlobalHistory);
-            tagComp[1][i].UpdateFoldHist(GlobalHistory);
+            IndexBuff[i].UpdateFoldHist(GlobalHistory);
+            TagBuff[0][i].UpdateFoldHist(GlobalHistory);
+            TagBuff[1][i].UpdateFoldHist(GlobalHistory);
 
     }   
     
@@ -260,7 +262,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
     // Check if the current Entry which gave the prediction is a newly allocated entry or not.
 	     if((TagLoc[FirstStage][TagIndex[FirstStage]].ctr == 0) &&((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 1) || (TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  == 2)))
     		{
-    		  new_entry = true;
+    		  new_entry = true;            
     			if (FirstStagePred != NextStagePred)
     			  {
         				if (NextStagePred == taken)
@@ -272,7 +274,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
     			 }
     		}
 
-    // IF mispredicted 
+    // If mispredicted check in previous stages
     if((!new_entry) || (new_entry && (FirstStagePred != taken)))
     {
   	    if (((ActualPred != taken) & (FirstStage > 0)))
@@ -280,11 +282,11 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
   			  for (int i = 0; i < FirstStage; i++)
   			  {
       			if (TagLoc[i][TagIndex[i]].ctr == 0){
-      					strong_old_present = true;
+      					FoundSpace = true;
             }
   			  }
   	// If no entry useful than decrease useful bits of all entries but do not allocate
-  			if (strong_old_present == false)
+  			if (FoundSpace == false)
   			{
       			for (int i = FirstStage - 1; i >= 0; i--)
       			{
