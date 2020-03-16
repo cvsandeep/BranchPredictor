@@ -264,7 +264,7 @@ inline bool get_tage_predictor(uint32_t PC) {
 
        // Intialize Two stage before finding in the TAGE
        FirstStagePred = -1;
-       NextStagePred = -1;
+       NextStagePred = get_base_prediction(PC % (1<<BASE_ADDR_BITS));
        FirstStage = TOTAL_STAGES;
        NextStage = TOTAL_STAGES;
 
@@ -283,16 +283,10 @@ inline bool get_tage_predictor(uint32_t PC) {
           if(TagLoc[iterator][TagIndex[iterator]].tag == tag[iterator])
           {
               NextStage = iterator;
+              NextStagePred = TagLoc[NextStage][TagIndex[NextStage]].Predictor[2];
               break;
           }
       }
-
-    if(NextStage < TOTAL_STAGES)
-     {
-         NextStagePred = TagLoc[NextStage][TagIndex[NextStage]].Predictor[2];
-     } else {
-        NextStagePred = get_base_prediction(PC % (1<<BASE_ADDR_BITS));
-     }
 
     if(FirstStage < TOTAL_STAGES)
     {
@@ -333,7 +327,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
             TagLoc[FirstStage][TagIndex[FirstStage]].Predictor = decrement(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor);
         }
         
-        // Update the counters if next stage is mispredicted.
+        // Update the counters if both stages predictions are wrong.
         if ((ActualPred != NextStagePred))
         {
     			if (ActualPred == taken)
@@ -362,7 +356,7 @@ inline void update_tage_predictor(uint32_t PC, bool taken){
     			 }
     		}
 
-    // Proceeding to allocation of the entry.
+    // IF mispredicted 
     if((!new_entry) || (new_entry && (FirstStagePred != taken)))
     {
   	    if (((ActualPred != taken) & (FirstStage > 0)))
