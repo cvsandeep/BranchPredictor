@@ -22,9 +22,20 @@ Tage - 2^11 enteries and 8 bit * 2 = 32768 bits;
 ---- 4KB ----*/
 
 /*
-Base- 2^11 x 2  =2^12 = 4096 bits + 150 = 4246
-Tage - 2^11 enteries and 7 bit * 2 = 32768 bits;
----- =32768 bits = 4KB ----*/
+Base- 2^11 x 2  =2^12 = 4096 bits + 135 = 4231
+Tage - 2^11 enteries and 7 bit * 2 = 28672 bits;
+---- =32903 bits = 4KB ----*/
+
+/*
+Base- 2^11 x 2  =2^12 = 4096 bits + 135 = 4231
+Tage - 2^11 enteries and 6 bit * 2 = 28672 bits;
+---- =28807 bits = 4KB ----*/
+
+/*
+Base- 2^10 x 2  =2^11 = 2048 bits + 135 = 2183
+Tage - 2^11 enteries and 7 bit * 2 = 28672 bits;
+---- =30855 bits = 4KB ----*/
+
 
 #define BASE_ADDR_BITS 11
 static std::bitset<2> BasePredictor[1<<BASE_ADDR_BITS];
@@ -39,9 +50,9 @@ struct TAGE  // Each entry in the tag Pred Table is 13 bits
 };
 static TAGE TagLoc[TOTAL_STAGES][1<<TAG_ADDR_BITS];
 
-static std::bitset<4> StageChooser (8);
-static std::bitset<16> PathHistory;
-static std::bitset<131> GlobalHistory;
+static std::bitset<2> StageChooser (1);
+static std::bitset<31> GlobalHistory;
+static std::bitset<16> PathHistory; // USing the same as global so removing from mem buget
 
 /**********************************************************************
  *******************HELPER FUNCTIONS***********************************
@@ -123,7 +134,7 @@ struct FoldHistory
 {
     uint32_t HistLength;
     uint32_t FoldComp;
-    void UpdateFoldHist(std::bitset<131> ghr)
+    void UpdateFoldHist(std::bitset<31> ghr)
     {
         // Xor bits of chunk of Global history into a byte 
         int mask = 0xFF;
@@ -138,7 +149,7 @@ struct FoldHistory
 };
 
 
- uint32_t HistoryLen[TOTAL_STAGES] = {130,44};
+ uint32_t HistoryLen[TOTAL_STAGES] = {30,15};
  static FoldHistory IndexBuff[TOTAL_STAGES];  // For indexing the tag
  static FoldHistory TagBuff[2][TOTAL_STAGES]; // Tag value
 
@@ -207,7 +218,7 @@ inline bool get_tage_predictor(uint32_t PC) {
         // Check if it is in strong STate
         // Check if this stage is choosen
         // Not a new entry
-        if((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  != 1) ||(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor != 2 ) || (TagLoc[FirstStage][TagIndex[FirstStage]].ctr != 0) || (!StageChooser[3]))
+        if((TagLoc[FirstStage][TagIndex[FirstStage]].Predictor  != 1) ||(TagLoc[FirstStage][TagIndex[FirstStage]].Predictor != 2 ) || (TagLoc[FirstStage][TagIndex[FirstStage]].ctr != 0) || (!StageChooser[1]))
         {
             FirstStagePred = TagLoc[FirstStage][TagIndex[FirstStage]].Predictor[1];
             return FirstStagePred;
